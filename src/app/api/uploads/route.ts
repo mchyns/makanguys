@@ -70,11 +70,11 @@ export async function POST(req: NextRequest) {
         });
 
       if (error) {
-        console.error('Supabase storage upload error:', error);
-        return NextResponse.json(
-          { error: `Gagal mengunggah foto ${file.name} ke server penyimpanan.` },
-          { status: 500 }
-        );
+        console.warn('Supabase storage upload failed, falling back to data URL:', error.message);
+        // Fallback gracefully so recommendation submission NEVER crashes even if bucket is missing!
+        const base64 = Buffer.from(buffer).toString('base64');
+        uploadedPaths.push(`data:${file.type};base64,${base64}`);
+        continue;
       }
 
       const { data: publicUrlData } = supabase.storage

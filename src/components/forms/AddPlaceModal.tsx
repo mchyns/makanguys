@@ -5,6 +5,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { PlaceSubmissionSchema, PlaceSubmissionInput } from '@/lib/validations/place';
 import { CATEGORIES, PRICE_RANGES, DEFAULT_MAP_CENTER } from '@/lib/constants';
+import { compressImage } from '@/lib/utils/image';
 import MapComponent from '../map/MapComponent';
 import {
   X,
@@ -31,6 +32,7 @@ export default function AddPlaceModal({ isOpen, onClose, onSuccess }: AddPlaceMo
     lng: DEFAULT_MAP_CENTER.lng,
   });
   const [selectedPhotos, setSelectedPhotos] = useState<{ file: File; preview: string }[]>([]);
+  const [isCompressing, setIsCompressing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -64,35 +66,43 @@ export default function AddPlaceModal({ isOpen, onClose, onSuccess }: AddPlaceMo
 
   if (!isOpen) return null;
 
-  // Handle Photo selection & validation
-  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files) return;
+  // Handle Photo selection & validation with client-side compression
+  const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
     const files = Array.from(e.target.files);
 
     if (selectedPhotos.length + files.length > 5) {
       alert('Maksimal 5 foto per tempat makan.');
+      e.target.value = '';
       return;
     }
 
-    const newPhotos: { file: File; preview: string }[] = [];
-    for (const file of files) {
-      if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
-        alert(`Format file ${file.name} tidak didukung. Harap pilih JPEG, PNG, atau WebP.`);
-        continue;
-      }
-      if (file.size > 5 * 1024 * 1024) {
-        alert(`Ukuran file ${file.name} melebihi 5 MB.`);
-        continue;
-      }
-      newPhotos.push({
-        file,
-        preview: URL.createObjectURL(file),
-      });
-    }
+    setIsCompressing(true);
+    try {
+      const newPhotos: { file: File; preview: string }[] = [];
+      for (const file of files) {
+        if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+          alert(`Format berkas ${file.name} tidak didukung. Harap pilih JPEG, PNG, atau WebP.`);
+          continue;
+        }
 
-    const updated = [...selectedPhotos, ...newPhotos];
-    setSelectedPhotos(updated);
-    setValue('photos', updated.map((p) => p.preview)); // temporary previews for validation
+        // Compress image using canvas to ensure payload is tiny (~150-250KB) and avoids Vercel 4.5MB limit
+        const compressed = await compressImage(file, 1200, 0.8);
+        newPhotos.push({
+          file: compressed,
+          preview: URL.createObjectURL(compressed),
+        });
+      }
+
+      const updated = [...selectedPhotos, ...newPhotos];
+      setSelectedPhotos(updated);
+      setValue('photos', updated.map((p) => p.preview));
+    } catch (err) {
+      console.error('Error compressing photos:', err);
+    } finally {
+      setIsCompressing(false);
+      e.target.value = '';
+    }
   };
 
   const removePhoto = (index: number) => {
@@ -127,16 +137,34 @@ export default function AddPlaceModal({ isOpen, onClose, onSuccess }: AddPlaceMo
       // 1. Upload photos first
       setIsUploading(true);
       const formData = new FormData();
-      selectedPhotos.forEach((p) => formData.append('files', p.file));
+      for (const p of selectedPhotos) {
+        // Double check compression before uploading
+        const fileToUpload = p.file.size > 800 * 1024 ? await compressImage(p.file, 1200, 0.8) : p.file;
+        formData.append('files', fileToUpload);
+      }
 
-      const uploadRes = await fetch('/api/uploads', {
-        method: 'POST',
-        body: formData,
-      });
+      let uploadRes: Response;
+      try {
+        uploadRes = await fetch('/api/uploads', {
+          method: 'POST',
+          body: formData,
+        });
+      } catch (netErr: any) {
+        throw new Error('Gagal terhubung saat mengunggah foto. Pastikan koneksi internet stabil.');
+      }
 
-      const uploadJson = await uploadRes.json();
+      let uploadJson: any = null;
+      try {
+        uploadJson = await uploadRes.json();
+      } catch {
+        if (uploadRes.status === 413) {
+          throw new Error('Ukuran foto terlalu besar untuk jaringan Vercel. Coba kurangi jumlah foto.');
+        }
+        throw new Error(`Gagal mengunggah foto (status: ${uploadRes.status})`);
+      }
+
       if (!uploadRes.ok) {
-        throw new Error(uploadJson.error || 'Gagal mengunggah foto');
+        throw new Error(uploadJson?.error || 'Gagal mengunggah foto');
       }
 
       setIsUploading(false);
@@ -152,22 +180,37 @@ export default function AddPlaceModal({ isOpen, onClose, onSuccess }: AddPlaceMo
         photos: uploadedPaths,
       };
 
-      const placeRes = await fetch('/api/places', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+      let placeRes: Response;
+      try {
+        placeRes = await fetch('/api/places', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } catch (netErr: any) {
+        throw new Error('Gagal terhubung saat menyimpan data. Pastikan koneksi internet stabil.');
+      }
 
-      const placeJson = await placeRes.json();
+      let placeJson: any = null;
+      try {
+        placeJson = await placeRes.json();
+      } catch {
+        throw new Error(`Gagal menyimpan rekomendasi (status: ${placeRes.status})`);
+      }
+
       if (!placeRes.ok) {
-        throw new Error(placeJson.error || 'Gagal menyimpan rekomendasi');
+        throw new Error(placeJson?.error || 'Gagal menyimpan rekomendasi');
       }
 
       setSubmitSuccess(true);
       if (onSuccess) onSuccess();
     } catch (err: any) {
       console.error('Submit error:', err);
-      setSubmitError(err.message || 'Terjadi kesalahan sistem saat mengirim rekomendasi.');
+      let msg = err.message || 'Terjadi kesalahan sistem saat mengirim rekomendasi.';
+      if (msg === 'Failed to fetch' || msg.includes('Failed to fetch')) {
+        msg = 'Koneksi gagal ke server (Failed to fetch). Periksa jaringan internet Anda atau coba beberapa saat lagi.';
+      }
+      setSubmitError(msg);
     } finally {
       setIsSubmitting(false);
       setIsUploading(false);
@@ -414,14 +457,25 @@ export default function AddPlaceModal({ isOpen, onClose, onSuccess }: AddPlaceMo
                       ))}
 
                       {selectedPhotos.length < 5 && (
-                        <label className="aspect-4/3 rounded-xl border-2 border-dashed border-slate-300 hover:border-blue-500 hover:bg-blue-50/50 flex flex-col items-center justify-center cursor-pointer transition p-4 text-center">
-                          <Upload className="w-6 h-6 text-slate-400 group-hover:text-blue-600 mb-1" />
-                          <span className="text-xs font-semibold text-slate-700">Pilih / Jepret Foto</span>
-                          <span className="text-[10px] text-slate-400 mt-0.5">JPEG, PNG, WebP</span>
+                        <label className={`aspect-4/3 rounded-xl border-2 border-dashed border-slate-300 hover:border-blue-500 hover:bg-blue-50/50 flex flex-col items-center justify-center cursor-pointer transition p-4 text-center ${isCompressing ? 'opacity-60 pointer-events-none' : ''}`}>
+                          {isCompressing ? (
+                            <>
+                              <Loader2 className="w-6 h-6 text-blue-600 animate-spin mb-1" />
+                              <span className="text-xs font-semibold text-slate-700">Mengoptimalkan Foto...</span>
+                              <span className="text-[10px] text-slate-400 mt-0.5">Kompresi resolusi HP</span>
+                            </>
+                          ) : (
+                            <>
+                              <Upload className="w-6 h-6 text-slate-400 group-hover:text-blue-600 mb-1" />
+                              <span className="text-xs font-semibold text-slate-700">Pilih / Jepret Foto</span>
+                              <span className="text-[10px] text-slate-400 mt-0.5">JPEG, PNG, WebP</span>
+                            </>
+                          )}
                           <input
                             type="file"
                             accept="image/jpeg,image/png,image/webp"
                             multiple
+                            disabled={isCompressing}
                             onChange={handlePhotoChange}
                             className="hidden"
                           />
@@ -520,7 +574,8 @@ export default function AddPlaceModal({ isOpen, onClose, onSuccess }: AddPlaceMo
                   <button
                     type="button"
                     onClick={handleNextStep}
-                    className="flex items-center gap-1.5 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-xl shadow-xs transition ml-auto"
+                    disabled={isCompressing}
+                    className="flex items-center gap-1.5 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-semibold text-xs rounded-xl shadow-xs transition ml-auto"
                   >
                     <span>Lanjutkan</span>
                     <ArrowRight className="w-3.5 h-3.5" />
