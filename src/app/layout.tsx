@@ -1,6 +1,7 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
+import InstallPwaPrompt from "@/components/pwa/InstallPwaPrompt";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -12,6 +13,13 @@ const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
 });
+
+export const viewport: Viewport = {
+  themeColor: "#2563EB",
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+};
 
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'),
@@ -26,6 +34,12 @@ export const metadata: Metadata = {
     "street food indonesia",
     "makan enak",
   ],
+  manifest: '/manifest.webmanifest',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'MakanGuys',
+  },
   openGraph: {
     title: "MakanGuys — Makan Guys, Meninggal kalian kalo gak makan",
     description: "Temukan yang enak, tandai tempatnya. Rekomendasi kuliner langsung dari komunitas.",
@@ -34,9 +48,12 @@ export const metadata: Metadata = {
     images: ['/brand.png'],
   },
   icons: {
-    icon: '/icon.png',
-    shortcut: '/icon.png',
-    apple: '/icon.png',
+    icon: [
+      { url: '/favicon.ico', sizes: 'any' },
+      { url: '/icon.png', type: 'image/png', sizes: '192x192' },
+    ],
+    shortcut: '/favicon.ico',
+    apple: '/apple-touch-icon.png',
   },
 };
 
@@ -49,7 +66,19 @@ export default function RootLayout({
     <html lang="id" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col bg-slate-50 text-slate-900 selection:bg-blue-100 selection:text-blue-900">
         {children}
+        <InstallPwaPrompt />
         <Analytics />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              if ('serviceWorker' in navigator) {
+                window.addEventListener('load', function() {
+                  navigator.serviceWorker.register('/sw.js').catch(function() {});
+                });
+              }
+            `,
+          }}
+        />
       </body>
     </html>
   );

@@ -108,7 +108,7 @@ export default function MapComponent({
         setIsLoaded(true);
         setLoadError(null);
         map.resize();
-        if (hasSavedLocation && !miniMode && !selectedPlace) {
+        if (hasSavedLocation && !miniMode && !selectedPlace && !pickerMode) {
           updateUserMarker(map, centerLng, centerLat);
         }
       };
@@ -207,27 +207,33 @@ export default function MapComponent({
   useEffect(() => {
     if (!pickerMode || !mapRef.current || !isLoaded) return;
 
+    // Clean up any existing user steady marker so it never collides with picker pin
+    if (userMarkerRef.current) {
+      userMarkerRef.current.remove();
+      userMarkerRef.current = null;
+    }
+
     const coords = initialCoords || { lat: DEFAULT_MAP_CENTER.lat, lng: DEFAULT_MAP_CENTER.lng };
 
     if (!pickerMarkerRef.current) {
       const el = document.createElement('div');
-      el.className = 'cursor-grab flex flex-col items-center';
+      el.className = 'makan-picker-marker flex flex-col items-center select-none cursor-grab active:cursor-grabbing';
       el.innerHTML = `
-        <div class="relative flex items-center justify-center">
-          <div class="w-10 h-10 bg-blue-600 rounded-full border-2 border-white shadow-lg flex items-center justify-center text-white">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/>
-              <circle cx="12" cy="10" r="3"/>
-            </svg>
-          </div>
-          <div class="w-2.5 h-2.5 bg-blue-600 rotate-45 -mt-1 rounded-xs"></div>
+        <div class="mb-1 px-2.5 py-0.5 bg-slate-900/90 backdrop-blur-xs text-white text-[10px] font-bold rounded-full shadow-lg border border-white/20 whitespace-nowrap flex items-center gap-1.5 pointer-events-none">
+          <span class="w-1.5 h-1.5 rounded-full bg-blue-400 animate-ping"></span>
+          <span>Geser pin ke titik lokasi</span>
         </div>
-        <div class="bg-navy text-white text-[11px] font-semibold px-2 py-0.5 rounded shadow mt-1 whitespace-nowrap">
-          Geser atau Klik Peta
+        <div class="relative flex flex-col items-center filter drop-shadow-[0_4px_6px_rgba(0,0,0,0.35)] transition-transform duration-150 active:-translate-y-2">
+          <svg width="34" height="44" viewBox="0 0 34 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M17 0C7.61116 0 0 7.61116 0 17C0 29.75 17 44 17 44C17 44 34 29.75 34 17C34 7.61116 26.3888 0 17 0Z" fill="#2563EB"/>
+            <circle cx="17" cy="16" r="6.5" fill="white"/>
+            <circle cx="17" cy="16" r="3" fill="#1D4ED8"/>
+          </svg>
         </div>
+        <div class="w-3 h-1 bg-slate-900/25 rounded-full blur-[1px] -mt-0.5"></div>
       `;
 
-      const marker = new Marker({ element: el, draggable: true })
+      const marker = new Marker({ element: el, draggable: true, anchor: 'bottom' })
         .setLngLat([coords.lng, coords.lat])
         .addTo(mapRef.current);
 
@@ -497,7 +503,9 @@ export default function MapComponent({
           localStorage.setItem('makanguys_user_coords', JSON.stringify({ lat: latitude, lng: longitude }));
         } catch {}
 
-        updateUserMarker(mapRef.current, longitude, latitude);
+        if (!pickerMode) {
+          updateUserMarker(mapRef.current, longitude, latitude);
+        }
 
         // Deselect any selected place so map doesn't get pulled back to an old selection
         if (onSelectPlace) {
