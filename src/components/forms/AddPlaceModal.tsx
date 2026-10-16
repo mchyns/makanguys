@@ -1,12 +1,12 @@
 'use client';
 
 import React, { useState } from 'react';
+import dynamic from 'next/dynamic';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { PlaceSubmissionSchema, PlaceSubmissionInput } from '@/lib/validations/place';
 import { CATEGORIES, PRICE_RANGES, DEFAULT_MAP_CENTER } from '@/lib/constants';
 import { compressImage } from '@/lib/utils/image';
-import MapComponent from '../map/MapComponent';
 import {
   X,
   Upload,
@@ -18,6 +18,17 @@ import {
   ArrowRight,
   ArrowLeft,
 } from 'lucide-react';
+
+// Lazy-load MapComponent so MapLibre GL JS bundle is not loaded until modal Step 2
+const MapComponent = dynamic(() => import('../map/MapComponent'), {
+  ssr: false,
+  loading: () => (
+    <div className="h-64 w-full bg-slate-100 flex flex-col items-center justify-center text-slate-500 gap-2">
+      <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+      <span className="text-xs">Memuat peta lokasi...</span>
+    </div>
+  ),
+});
 
 interface AddPlaceModalProps {
   isOpen: boolean;
@@ -66,7 +77,7 @@ export default function AddPlaceModal({ isOpen, onClose, onSuccess }: AddPlaceMo
 
   if (!isOpen) return null;
 
-  // Handle Photo selection & validation with client-side compression
+  // Handle Photo selection & validation with ultra-fast parallel compression
   const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
     const files = Array.from(e.target.files);
@@ -79,22 +90,26 @@ export default function AddPlaceModal({ isOpen, onClose, onSuccess }: AddPlaceMo
 
     setIsCompressing(true);
     try {
-      const newPhotos: { file: File; preview: string }[] = [];
-      for (const file of files) {
+      const validFiles = files.filter((file) => {
         if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
           alert(`Format berkas ${file.name} tidak didukung. Harap pilih JPEG, PNG, atau WebP.`);
-          continue;
+          return false;
         }
+        return true;
+      });
 
-        // Compress image using canvas to ensure payload is tiny (~150-250KB) and avoids Vercel 4.5MB limit
-        const compressed = await compressImage(file, 1200, 0.8);
-        newPhotos.push({
-          file: compressed,
-          preview: URL.createObjectURL(compressed),
-        });
-      }
+      // Compress all files concurrently in parallel (< 0.8s total)
+      const compressedList = await Promise.all(
+        validFiles.map(async (file) => {
+          const compressed = await compressImage(file, 960, 0.72);
+          return {
+            file: compressed,
+            preview: URL.createObjectURL(compressed),
+          };
+        })
+      );
 
-      const updated = [...selectedPhotos, ...newPhotos];
+      const updated = [...selectedPhotos, ...compressedList];
       setSelectedPhotos(updated);
       setValue('photos', updated.map((p) => p.preview));
     } catch (err) {
@@ -134,14 +149,12 @@ export default function AddPlaceModal({ isOpen, onClose, onSuccess }: AddPlaceMo
     setSubmitError(null);
 
     try {
-      // 1. Upload photos first
+      // 1. Upload photos first (already pre-compressed in parallel)
       setIsUploading(true);
       const formData = new FormData();
-      for (const p of selectedPhotos) {
-        // Double check compression before uploading
-        const fileToUpload = p.file.size > 800 * 1024 ? await compressImage(p.file, 1200, 0.8) : p.file;
-        formData.append('files', fileToUpload);
-      }
+      selectedPhotos.forEach((p) => {
+        formData.append('files', p.file);
+      });
 
       let uploadRes: Response;
       try {

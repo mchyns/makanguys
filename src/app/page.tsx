@@ -9,7 +9,6 @@ import Navbar from '@/components/layout/Navbar';
 import SearchBar from '@/components/places/SearchBar';
 import FilterBar from '@/components/places/FilterBar';
 import PlaceCard from '@/components/places/PlaceCard';
-import AddPlaceModal from '@/components/forms/AddPlaceModal';
 import { useDebounce } from '@/hooks/useDebounce';
 import { formatPriceRange } from '@/lib/utils/format';
 import {
@@ -34,10 +33,16 @@ const MapComponent = dynamic(() => import('@/components/map/MapComponent'), {
   ),
 });
 
+// Dynamic import AddPlaceModal to dramatically shrink initial homepage JS bundle
+const AddPlaceModal = dynamic(() => import('@/components/forms/AddPlaceModal'), {
+  ssr: false,
+});
+
 function HomeContent() {
   const searchParams = useSearchParams();
   const [places, setPlaces] = useState<Place[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [isFallback, setIsFallback] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [category, setCategory] = useState('all');
@@ -46,22 +51,20 @@ function HomeContent() {
   const [selectedPlace, setSelectedPlace] = useState<Place | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [mobileTab, setMobileTab] = useState<'map' | 'list'>('map');
-  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
-
-  // Load saved user location from localStorage on mount
-  useEffect(() => {
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(() => {
     if (typeof window !== 'undefined') {
       try {
         const saved = localStorage.getItem('makanguys_user_coords');
         if (saved) {
           const parsed = JSON.parse(saved);
           if (typeof parsed.lat === 'number' && typeof parsed.lng === 'number') {
-            setUserLocation({ lat: parsed.lat, lng: parsed.lng });
+            return { lat: parsed.lat, lng: parsed.lng };
           }
         }
       } catch {}
     }
-  }, []);
+    return null;
+  });
 
   const debouncedSearch = useDebounce(searchQuery, 300);
 
@@ -74,7 +77,7 @@ function HomeContent() {
 
   // Fetch places
   const fetchPlaces = async () => {
-    setIsLoading(true);
+    if (isInitialLoad) setIsLoading(true);
     try {
       const params = new URLSearchParams();
       if (debouncedSearch) params.set('q', debouncedSearch);
@@ -96,6 +99,7 @@ function HomeContent() {
       console.error('Failed to fetch places:', e);
     } finally {
       setIsLoading(false);
+      setIsInitialLoad(false);
     }
   };
 

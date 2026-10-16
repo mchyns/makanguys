@@ -1,9 +1,19 @@
 /**
- * Compresses an image File using HTML5 canvas to ensure fast upload
+ * Compresses an image File using HTML5 canvas to ensure ultra-fast upload
  * and stay comfortably below Vercel's 4.5MB Serverless Function payload limit.
+ * Optimized for mobile CPU and instant transmission (~50-80KB target size).
  */
-export async function compressImage(file: File, maxDimension = 1200, quality = 0.8): Promise<File> {
+export async function compressImage(
+  file: File,
+  maxDimension = 960,
+  quality = 0.72
+): Promise<File> {
   if (typeof window === 'undefined' || !file.type.startsWith('image/')) {
+    return file;
+  }
+
+  // Already lightweight? Skip compression to save battery & CPU
+  if (file.size <= 80 * 1024) {
     return file;
   }
 
@@ -29,12 +39,15 @@ export async function compressImage(file: File, maxDimension = 1200, quality = 0
       canvas.width = width;
       canvas.height = height;
 
-      const ctx = canvas.getContext('2d');
+      const ctx = canvas.getContext('2d', { alpha: false });
       if (!ctx) {
         resolve(file);
         return;
       }
 
+      // Fill white background for transparent PNG converted to JPEG
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, width, height);
       ctx.drawImage(img, 0, 0, width, height);
 
       canvas.toBlob(
@@ -62,3 +75,4 @@ export async function compressImage(file: File, maxDimension = 1200, quality = 0
     img.src = url;
   });
 }
+

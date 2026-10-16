@@ -37,10 +37,17 @@ export async function GET(req: NextRequest) {
         status: statusFilter,
       });
 
-      return NextResponse.json({
-        data: places,
-        isFallback: true,
-      });
+      return NextResponse.json(
+        {
+          data: places,
+          isFallback: true,
+        },
+        {
+          headers: {
+            'Cache-Control': 'public, s-maxage=10, stale-while-revalidate=59',
+          },
+        }
+      );
     }
 
     const supabase = createServerClient()!;
@@ -75,7 +82,14 @@ export async function GET(req: NextRequest) {
       console.error('Supabase query error:', error);
       // Fallback gracefully on query error
       const places = fallbackStore.getPlaces({ q, category, price_range, sort, userLat, userLng, status: statusFilter });
-      return NextResponse.json({ data: places, isFallback: true });
+      return NextResponse.json(
+        { data: places, isFallback: true },
+        {
+          headers: {
+            'Cache-Control': 'public, s-maxage=5, stale-while-revalidate=30',
+          },
+        }
+      );
     }
 
     // Attach public URLs to photos if needed
@@ -91,10 +105,17 @@ export async function GET(req: NextRequest) {
       return { ...place, photos };
     });
 
-    return NextResponse.json({
-      data: formatted,
-      isFallback: false,
-    });
+    return NextResponse.json(
+      {
+        data: formatted,
+        isFallback: false,
+      },
+      {
+        headers: {
+          'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=59',
+        },
+      }
+    );
   } catch (err: any) {
     console.error('API /places error:', err);
     return NextResponse.json({ error: 'Gagal memuat rekomendasi tempat makan' }, { status: 500 });

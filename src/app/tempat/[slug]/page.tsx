@@ -1,16 +1,25 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import dynamic from 'next/dynamic';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Place } from '@/types';
 import Navbar from '@/components/layout/Navbar';
-import MapComponent from '@/components/map/MapComponent';
 import ReportModal from '@/components/reports/ReportModal';
 import PlaceCard from '@/components/places/PlaceCard';
 import { useBookmarks } from '@/hooks/useBookmarks';
 import { formatPriceRange, formatDateIndo } from '@/lib/utils/format';
 import { CATEGORIES } from '@/lib/constants';
+
+const MapComponent = dynamic(() => import('@/components/map/MapComponent'), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-full min-h-[280px] bg-slate-100 flex items-center justify-center">
+      <Loader2 className="w-6 h-6 text-blue-600 animate-spin" />
+    </div>
+  ),
+});
 import {
   MapPin,
   Share2,

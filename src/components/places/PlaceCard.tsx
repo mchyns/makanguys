@@ -39,6 +39,7 @@ export default function PlaceCard({ place, isSelected = false, onSelectOnMap }: 
           alt={place.name}
           className="w-full h-full object-cover group-hover:scale-102 transition duration-300"
           loading="lazy"
+          decoding="async"
         />
 
         {/* Category Pill */}

@@ -34,18 +34,17 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Upload files
-    const uploadedPaths: string[] = [];
-
+    // Upload files concurrently in parallel
     if (!isServerSupabaseConfigured) {
       // In local development / fallback mode without Supabase storage credentials:
-      // Convert to base64 Data URLs so preview & submission continue seamlessly!
-      for (const file of files) {
-        const buffer = await file.arrayBuffer();
-        const base64 = Buffer.from(buffer).toString('base64');
-        const dataUrl = `data:${file.type};base64,${base64}`;
-        uploadedPaths.push(dataUrl);
-      }
+      // Convert to base64 Data URLs concurrently so preview & submission continue seamlessly!
+      const uploadedPaths = await Promise.all(
+        files.map(async (file) => {
+          const buffer = await file.arrayBuffer();
+          const base64 = Buffer.from(buffer).toString('base64');
+          return `data:${file.type};base64,${base64}`;
+        })
+      );
 
       return NextResponse.json({
         success: true,
@@ -56,33 +55,53 @@ export async function POST(req: NextRequest) {
 
     const supabase = createServerClient()!;
 
-    for (const file of files) {
-      const buffer = await file.arrayBuffer();
-      const bytes = new Uint8Array(buffer);
-      const ext = file.type === 'image/jpeg' ? 'jpg' : file.type === 'image/png' ? 'png' : 'webp';
-      const fileName = `places/${Date.now()}-${crypto.randomUUID()}.${ext}`;
+    // Upload files concurrently in parallel to Supabase Storage
+    const uploadedPaths = await Promise.all(
+      files.map(async (file) => {
+        const buffer = await file.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        const ext = file.type === 'image/jpeg' ? 'jpg' : file.type === 'image/png' ? 'png' : 'webp';
+        const fileName = `places/${Date.now()}-${crypto.randomUUID()}.${ext}`;
 
-      const { data, error } = await supabase.storage
-        .from('place-photos')
-        .upload(fileName, bytes, {
-          contentType: file.type,
-          upsert: false,
-        });
+        let uploadRes = await supabase.storage
+          .from('place-photos')
+          .upload(fileName, bytes, {
+            contentType: file.type,
+            upsert: false,
+          });
 
-      if (error) {
-        console.warn('Supabase storage upload failed, falling back to data URL:', error.message);
-        // Fallback gracefully so recommendation submission NEVER crashes even if bucket is missing!
-        const base64 = Buffer.from(buffer).toString('base64');
-        uploadedPaths.push(`data:${file.type};base64,${base64}`);
-        continue;
-      }
+        // If bucket does not exist, attempt to auto-create it and retry upload
+        if (
+          uploadRes.error &&
+          (uploadRes.error.message?.includes('not found') || uploadRes.error.message?.includes('bucket'))
+        ) {
+          try {
+            await supabase.storage.createBucket('place-photos', { public: true });
+            uploadRes = await supabase.storage
+              .from('place-photos')
+              .upload(fileName, bytes, {
+                contentType: file.type,
+                upsert: false,
+              });
+          } catch {
+            // ignore create bucket error if insufficient permissions
+          }
+        }
 
-      const { data: publicUrlData } = supabase.storage
-        .from('place-photos')
-        .getPublicUrl(data.path);
+        if (uploadRes.error) {
+          console.warn('Supabase storage upload failed, falling back to data URL:', uploadRes.error.message);
+          // Fallback gracefully so recommendation submission NEVER crashes even if bucket is missing!
+          const base64 = Buffer.from(buffer).toString('base64');
+          return `data:${file.type};base64,${base64}`;
+        }
 
-      uploadedPaths.push(publicUrlData.publicUrl || data.path);
-    }
+        const { data: publicUrlData } = supabase.storage
+          .from('place-photos')
+          .getPublicUrl(uploadRes.data.path);
+
+        return publicUrlData.publicUrl || uploadRes.data.path;
+      })
+    );
 
     return NextResponse.json({
       success: true,
